@@ -6,12 +6,12 @@
 <title>日切放行</title>
 <script src="/static/vue.global.prod.js"></script>
 <style>
-  :root{--bg:#0b1220;--panel:#121a2b;--line:#243049;--text:#e8eefc;--muted:#93a0b8;--ok:#3ddc97;--bad:#ff6b6b;--accent:#4cc9f0}
+  :root{--bg:#0b1220;--panel:#121a2b;--line:#243049;--text:#e8eefc;--muted:#93a0b8;--ok:#3ddc97;--bad:#ff6b6b;--accent:#4cc9f0;--warn:#ffd166}
   *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
   .top{display:flex;align-items:center;gap:18px;padding:14px 20px;border-bottom:1px solid var(--line);background:#0e1626}
   .brand{font-weight:700;letter-spacing:.08em;font-size:18px}
   .brand small{display:block;color:var(--muted);font-weight:400;font-size:11px;letter-spacing:.02em;margin-top:2px}
-  .tabs{display:flex;gap:6px;flex:1}
+  .tabs{display:flex;gap:6px;flex:1;flex-wrap:wrap}
   .tabs button{background:transparent;border:1px solid transparent;color:var(--muted);padding:8px 12px;border-radius:999px;cursor:pointer}
   .tabs button.on{color:var(--text);border-color:var(--line);background:#18233a}
   .user{color:var(--muted);font-size:13px}
@@ -20,19 +20,32 @@
   .grid{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
   h2{margin:0 0 10px;font-size:15px;color:#c9d4ea}
+  h3{margin:14px 0 8px;font-size:13px;color:#c9d4ea}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left}
   th{color:var(--muted);font-weight:600}
   input,select{width:100%;background:#0b1220;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 10px;margin:4px 0 10px}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .row4{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end}
   .primary{background:var(--accent);color:#041018;border:0;padding:9px 12px;border-radius:8px;font-weight:700;cursor:pointer}
+  .primary:disabled,.ghost:disabled{background:#22304a;color:#5c6b87;cursor:not-allowed;font-weight:400}
   .mono{font-family:Consolas,"Courier New",monospace}
   .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:#1b2a22;color:var(--ok)}
   .tag.bad{background:#2a1518;color:var(--bad)}
+  .tag.warn{background:#2a2415;color:var(--warn)}
+  .tag.off{background:#1a2233;color:var(--muted)}
   .login{max-width:400px;margin:12vh auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
   .err{color:var(--bad);min-height:18px;font-size:13px}
-  .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+  .okmsg{color:var(--ok);min-height:18px;font-size:13px}
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
   .kpi .panel{padding:12px}.kpi b{display:block;font-size:22px;margin-top:4px}
+  .policy{display:flex;gap:14px;align-items:flex-start;background:#101c2e;border:1px solid #2b3d5f;border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:#c9d4ea}
+  .policy b{color:var(--accent);white-space:nowrap}
+  .policy .src{color:var(--muted)}
+  .reason{color:var(--muted);font-size:12px}
+  .chk{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;padding-bottom:10px}
+  .chk input{width:auto;margin:0}
+  tr.sel{background:#16203a}
 </style>
 </head>
 <body>
@@ -54,13 +67,17 @@ createApp({
   setup(){
     const token=ref(localStorage.getItem('slicegate_token')||'');
     const user=ref(localStorage.getItem('slicegate_user')||'');
-    const username=ref('admin'), password=ref('123456'), err=ref(''), tab=ref(0), actionErr=ref('');
-    const slices=ref([]), releases=ref([]), watermarks=ref([]);
+    const username=ref('admin'), password=ref('123456'), err=ref(''), tab=ref(0), actionErr=ref(''), actionOk=ref('');
+    const slices=ref([]), releases=ref([]), watermarks=ref([]), deviations=ref([]), policy=ref(null);
     const form=ref({slice_no:'SL-2026-11-03-east',biz_date:'2026-11-03',partition_key:'east',row_count:1000,expected_count:1000});
-    const releaseSliceId=ref(1), consumer=ref('ads_order');
-    const nav=['切片登记','完整度裁决','下游放行','消费水位'];
+    const filter=ref({biz_date:'',partition_key:'',completeness:'',releasable:false});
+    const filterKey=ref('(无筛选)');
+    const consumer=ref('ads_order');
+    const detail=ref(null);
+    const nav=['切片登记','完整度裁决','放行工程','处置流水','消费水位'];
     const completeCnt=computed(()=>slices.value.filter(s=>s.completeness==='完整').length);
-    const openCnt=computed(()=>slices.value.filter(s=>s.release_status!=='已放行').length);
+    const releasableCnt=computed(()=>slices.value.filter(s=>s.releasable).length);
+    const deviationCnt=computed(()=>deviations.value.length);
     function auth(){return {Authorization:'Bearer '+token.value,'Content-Type':'application/json'};}
     async function login(){
       err.value='';
@@ -77,21 +94,45 @@ createApp({
       if(r.status===401){ logout(); return null; }
       return j;
     }
+    function filterQuery(){
+      const p=new URLSearchParams();
+      if(filter.value.biz_date)p.set('biz_date',filter.value.biz_date);
+      if(filter.value.partition_key)p.set('partition_key',filter.value.partition_key);
+      if(filter.value.completeness)p.set('completeness',filter.value.completeness);
+      if(filter.value.releasable)p.set('releasable','1');
+      const q=p.toString(); return q?'?'+q:'';
+    }
     async function refresh(){
       if(!token.value) return;
-      const s=await loadJson('/api/slices'); if(s===null) return;
+      const s=await loadJson('/api/slices'+filterQuery()); if(s===null) return;
       slices.value=Array.isArray(s.items)?s.items:[];
+      filterKey.value=s.filter_key||'(无筛选)';
       const rel=await loadJson('/api/releases'); if(rel===null) return;
       releases.value=Array.isArray(rel.items)?rel.items:[];
+      const dv=await loadJson('/api/deviations'); if(dv===null) return;
+      deviations.value=Array.isArray(dv.items)?dv.items:[];
       const w=await loadJson('/api/watermarks'); if(w===null) return;
       watermarks.value=Array.isArray(w.items)?w.items:[];
-      if(slices.value.length) releaseSliceId.value=slices.value[0].id;
+      const p=await loadJson('/api/policy'); if(p===null) return;
+      policy.value=p;
+      if(detail.value) await showDetail(detail.value.slice.id,true);
     }
-    async function createSlice(){actionErr.value='';const r=await fetch('/api/slices',{method:'POST',headers:auth(),body:JSON.stringify(form.value)});const j=await r.json();if(!r.ok)actionErr.value=j.detail||'失败';await refresh();}
+    async function createSlice(){actionErr.value='';actionOk.value='';const r=await fetch('/api/slices',{method:'POST',headers:auth(),body:JSON.stringify(form.value)});const j=await r.json();if(!r.ok)actionErr.value=j.detail||'失败';await refresh();}
     async function evaluate(id){await fetch('/api/slices/'+id+'/evaluate',{method:'POST',headers:auth()});await refresh();}
-    async function doRelease(){actionErr.value='';const r=await fetch('/api/slices/'+releaseSliceId.value+'/release',{method:'POST',headers:auth(),body:JSON.stringify({consumer:consumer.value})});const j=await r.json();if(!r.ok)actionErr.value=j.detail||'放行失败';await refresh();}
+    async function doRelease(s){
+      actionErr.value='';actionOk.value='';
+      const r=await fetch('/api/slices/'+s.id+'/release',{method:'POST',headers:auth(),body:JSON.stringify({consumer:consumer.value,filter:filter.value})});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok){actionErr.value=j.detail||'放行失败';}else{actionOk.value=s.slice_no+' 已放行（现场重裁一致）';}
+      await refresh();
+    }
+    async function showDetail(id,keep){
+      const j=await loadJson('/api/slices/'+id); if(j===null) return;
+      if(!j.slice){if(!keep)detail.value=null;return;}
+      detail.value=j;
+    }
     onMounted(()=>{if(token.value)refresh();});
-    return {token,user,username,password,err,tab,nav,slices,releases,watermarks,form,releaseSliceId,consumer,actionErr,completeCnt,openCnt,login,logout,createSlice,evaluate,doRelease};
+    return {token,user,username,password,err,tab,nav,slices,releases,watermarks,deviations,policy,form,filter,filterKey,consumer,detail,actionErr,actionOk,completeCnt,releasableCnt,deviationCnt,login,logout,createSlice,evaluate,doRelease,showDetail,refresh};
   },
   template:`
   <div v-if="!token" class="login">
@@ -106,11 +147,18 @@ createApp({
       <div class="user">{{user}}</div><button class="ghost" @click="logout">退出</button>
     </div>
     <main>
+      <div class="policy" v-if="policy">
+        <b>策略条 · {{policy.name}}（{{policy.approach}}处置）</b>
+        <span>{{policy.statement}}</span>
+        <span class="src">{{policy.rule_releasable}} ｜ 自 {{policy.effective_date}} 起，{{policy.no_same_day_change}}</span>
+      </div>
       <div class="kpi">
         <div class="panel">切片总数<b class="mono">{{slices.length}}</b></div>
-        <div class="panel">已完整<b class="mono">{{completeCnt}}</b></div>
-        <div class="panel">未放行<b class="mono">{{openCnt}}</b></div>
+        <div class="panel">已完整（现场重裁）<b class="mono">{{completeCnt}}</b></div>
+        <div class="panel">可放行<b class="mono">{{releasableCnt}}</b></div>
+        <div class="panel">筛选偏离<b class="mono">{{deviationCnt}}</b></div>
       </div>
+
       <div v-show="tab===0" class="grid">
         <div class="panel">
           <h2>在途切片</h2>
@@ -131,29 +179,94 @@ createApp({
           <div class="err">{{actionErr}}</div>
         </div>
       </div>
+
       <div v-show="tab===1" class="panel">
-        <h2>完整度裁决</h2>
-        <table><thead><tr><th>切片</th><th>缺口</th><th>结论</th><th>放行态</th></tr></thead>
+        <h2>完整度裁决（与放行闸同一裁决函数）</h2>
+        <table><thead><tr><th>切片</th><th>缺口</th><th>结论</th><th>放行态</th><th>可放行</th></tr></thead>
         <tbody><tr v-for="s in slices" :key="'c'+s.id">
           <td class="mono">{{s.slice_no}}</td><td class="mono">{{Math.max(s.expected_count-s.row_count,0)}}</td>
           <td>{{s.completeness}}</td><td>{{s.release_status}}</td>
+          <td><span class="tag" :class="{off:!s.releasable}">{{s.releasable?'可放行':'不可放行'}}</span></td>
         </tr></tbody></table>
       </div>
-      <div v-show="tab===2" class="grid">
-        <div class="panel">
-          <h2>申请放行</h2>
-          <label>切片</label><select v-model.number="releaseSliceId"><option v-for="s in slices" :value="s.id">{{s.slice_no}}（{{s.completeness}}）</option></select>
-          <label>下游</label><input v-model="consumer"/>
-          <button class="primary" @click="doRelease">放行</button>
-          <div class="err">{{actionErr}}</div>
+
+      <div v-show="tab===2">
+        <div class="panel" style="margin-bottom:14px">
+          <h2>筛选条 <span class="reason">当前筛选口径：{{filterKey}}（列表与闸口共用）</span></h2>
+          <div class="row4">
+            <div><label>业务日</label><input v-model="filter.biz_date" placeholder="如 2026-11-01"/></div>
+            <div><label>分区</label><input v-model="filter.partition_key" placeholder="如 east"/></div>
+            <div><label>完整度</label><select v-model="filter.completeness"><option value="">全部</option><option>完整</option><option>部分完整</option><option>待检</option></select></div>
+            <div><label class="chk"><input type="checkbox" v-model="filter.releasable"/>只看可放行</label><button class="primary" @click="refresh">应用筛选</button></div>
+          </div>
         </div>
-        <div class="panel">
-          <h2>放行流水</h2>
-          <table><thead><tr><th>切片</th><th>下游</th><th>结果</th><th>时间</th></tr></thead>
-          <tbody><tr v-for="r in releases" :key="r.id"><td class="mono">{{r.slice_no}}</td><td>{{r.consumer}}</td><td>{{r.status}}</td><td class="mono">{{r.created_at}}</td></tr></tbody></table>
+        <div class="grid">
+          <div class="panel">
+            <h2>筛选列表 <span class="reason">可放行性由服务端现场重裁给出，未完整项不可点</span></h2>
+            <table><thead><tr><th>切片号</th><th>日/区</th><th>实收</th><th>完整度</th><th>可放行</th><th>操作</th></tr></thead>
+            <tbody><tr v-for="s in slices" :key="'r'+s.id" :class="{sel:detail&&detail.slice.id===s.id}">
+              <td class="mono">{{s.slice_no}}</td><td>{{s.biz_date}} / {{s.partition_key}}</td>
+              <td class="mono">{{s.row_count}}/{{s.expected_count}}</td>
+              <td><span class="tag" :class="{bad:s.completeness!=='完整'}">{{s.completeness}}</span></td>
+              <td><span class="tag" :class="{off:!s.releasable}">{{s.releasable?'可放行':'不可放行'}}</span><div class="reason">{{s.releasable_reason}}</div></td>
+              <td>
+                <button class="primary" :disabled="!s.releasable" @click="doRelease(s)">放行</button>
+                <button class="ghost" @click="showDetail(s.id)">详情</button>
+              </td>
+            </tr></tbody></table>
+            <div class="err">{{actionErr}}</div><div class="okmsg">{{actionOk}}</div>
+          </div>
+          <div>
+            <div class="panel" style="margin-bottom:14px">
+              <h2>放行闸</h2>
+              <label>下游消费方</label><input v-model="consumer"/>
+              <div class="reason">闸口在写事务内现场重算完整度：未完整零写入并记筛选偏离；同一筛选条件下抢点放行排队，后手记筛选争用。列表仅提示，不作放行依据。</div>
+            </div>
+            <div class="panel" v-if="detail">
+              <h2>切片详情 <span class="mono">{{detail.slice.slice_no}}</span></h2>
+              <table>
+                <tr><th>业务日/分区</th><td>{{detail.slice.biz_date}} / {{detail.slice.partition_key}}</td></tr>
+                <tr><th>实收/期望</th><td class="mono">{{detail.slice.row_count}}/{{detail.slice.expected_count}}</td></tr>
+                <tr><th>完整度（现场重裁）</th><td>{{detail.slice.completeness}}</td></tr>
+                <tr><th>放行态</th><td>{{detail.slice.release_status}}</td></tr>
+                <tr><th>可放行</th><td><span class="tag" :class="{off:!detail.slice.releasable}">{{detail.slice.releasable?'可放行':'不可放行'}}</span> <span class="reason">{{detail.slice.releasable_reason}}</span></td></tr>
+              </table>
+              <h3>放行记录</h3>
+              <table><thead><tr><th>结果</th><th>下游</th><th>筛选口径</th><th>时间</th></tr></thead>
+              <tbody><tr v-for="r in detail.releases" :key="'dr'+r.id"><td>{{r.status}}</td><td>{{r.consumer}}</td><td class="mono">{{r.filter_key||'(无)'}}</td><td class="mono">{{r.created_at}}</td></tr>
+              <tr v-if="!detail.releases.length"><td colspan="4" class="reason">暂无</td></tr></tbody></table>
+              <h3>筛选偏离记录</h3>
+              <table><thead><tr><th>类型</th><th>说明</th><th>时间</th></tr></thead>
+              <tbody><tr v-for="d in detail.deviations" :key="'dd'+d.id"><td><span class="tag warn">{{d.kind}}</span></td><td>{{d.detail}}</td><td class="mono">{{d.created_at}}</td></tr>
+              <tr v-if="!detail.deviations.length"><td colspan="3" class="reason">暂无</td></tr></tbody></table>
+            </div>
+          </div>
         </div>
       </div>
-      <div v-show="tab===3" class="panel">
+
+      <div v-show="tab===3">
+        <div class="panel" style="margin-bottom:14px">
+          <h2>放行流水（含筛选争用标注）</h2>
+          <table><thead><tr><th>切片</th><th>下游</th><th>结果</th><th>筛选口径</th><th>操作人</th><th>时间</th></tr></thead>
+          <tbody><tr v-for="r in releases" :key="r.id">
+            <td class="mono">{{r.slice_no}}</td><td>{{r.consumer}}</td>
+            <td><span class="tag" :class="{bad:r.status==='拒绝',warn:r.status==='争用'}">{{r.status==='争用'?'筛选争用':r.status}}</span></td>
+            <td class="mono">{{r.filter_key||'(无)'}}</td><td>{{r.actor||'-'}}</td><td class="mono">{{r.created_at}}</td>
+          </tr></tbody></table>
+        </div>
+        <div class="panel">
+          <h2>筛选偏离流水（闸口拒绝留痕）</h2>
+          <table><thead><tr><th>切片</th><th>下游</th><th>类型</th><th>说明</th><th>筛选口径</th><th>操作人</th><th>时间</th></tr></thead>
+          <tbody><tr v-for="d in deviations" :key="d.id">
+            <td class="mono">{{d.slice_no}}</td><td>{{d.consumer}}</td>
+            <td><span class="tag warn">{{d.kind}}</span></td><td>{{d.detail}}</td>
+            <td class="mono">{{d.filter_key}}</td><td>{{d.actor}}</td><td class="mono">{{d.created_at}}</td>
+          </tr>
+          <tr v-if="!deviations.length"><td colspan="7" class="reason">暂无偏离</td></tr></tbody></table>
+        </div>
+      </div>
+
+      <div v-show="tab===4" class="panel">
         <h2>消费水位</h2>
         <table><thead><tr><th>消费方</th><th>业务日</th><th>水位</th><th>来源切片</th></tr></thead>
         <tbody><tr v-for="w in watermarks" :key="w.id"><td>{{w.consumer}}</td><td>{{w.biz_date}}</td><td class="mono">{{w.watermark}}</td><td class="mono">{{w.source_slice}}</td></tr></tbody></table>
